@@ -457,7 +457,471 @@ container_image="splunk/golden-cpu-custom:5.2.2"
 **Para futuras librerías:**
 - Simplemente agregar al archivo `my_custom_libraries.txt` y rebuild imagen
 
-### 9.5 Perspectiva del Científico de Datos: Flujo de Trabajo Real con DSDL
+### 9.5 Proceso DevOps: Agregar Librerías a Contenedores Custom (GCP/Azure)
+
+**Contexto:** Cristian (científico de datos) o cliente requiere librería faltante (ej: `aeon`). El equipo DevOps debe agregarla rápidamente a custom image y desplegarla en GCP o Azure.
+
+**Flujo completo end-to-end:**
+
+**Paso 1: Solicitud del Científico de Datos**
+
+**Cristian solicita librería:**
+- Opción A: Issue en repositorio Git (recomendado para tracking)
+- Opción B: Ticket en sistema de gestión (Jira, ServiceNow, etc.)
+- Opción C: Slack/Teams directo con DevOps
+
+**Información requerida en solicitud:**
+- Librería: `aeon>=0.5.0`
+- Justificación: "Necesaria para segmentación de series temporales en proyecto autoencoder"
+- Urgencia: Alta/Media/Baja
+- Proyecto: Autoencoder anomalías - Horno 4
+
+**Paso 2: DevOps - Preparar Custom Image**
+
+**2.1 Clone/Fork del repositorio base:**
+```bash
+# Si no existe fork del repositorio
+git clone https://github.com/splunk/splunk-mltk-container-docker
+cd splunk-mltk-container-docker
+
+# O si ya existe fork interno
+git clone https://github.com/empresa/splunk-mltk-container-docker-custom
+cd splunk-mltk-container-docker-custom
+```
+
+**2.2 Crear/actualizar archivo de requirements custom:**
+```bash
+# Editar archivo existente o crear nuevo
+vim requirements_files/my_custom_libraries.txt
+
+# Agregar nueva librería
+aeon>=0.5.0
+
+# (Otras librerías previas se mantienen)
+# statsmodels>=0.14.0
+# pyarrow>=14.0.1
+```
+
+**2.3 Actualizar tag_mapping.csv:**
+```bash
+# Editar tag_mapping.csv
+vim tag_mapping.csv
+
+# Verificar que existe fila para golden-cpu-custom:
+# Tag,base_image,dockerfile,base_requirements,specific_requirements,runtime,requirements_dockerfile
+# golden-cpu-custom,deb:bullseye,Dockerfile.debian.golden-cpu,base_functional.txt,my_custom_libraries.txt,none,Dockerfile.debian.requirements
+```
+
+**2.4 Pre-compilar requirements (recomendado):**
+```bash
+# Acelera build y fija versiones exactas
+./compile_image_python_requirements.sh golden-cpu-custom
+```
+
+**Paso 3: Build de la Imagen**
+
+**3.1 Build local (opción 1) o CI/CD (opción 2):**
+
+**Opción A: Build manual:**
+```bash
+# Build imagen custom
+./build.sh golden-cpu-custom splunk/ 5.2.2
+
+# Output: splunk/golden-cpu-custom:5.2.2
+```
+
+**Opción B: CI/CD pipeline (recomendado para producción):**
+
+**GitHub Actions / GitLab CI / Jenkins:**
+```yaml
+# Ejemplo: .github/workflows/build-custom-image.yml
+name: Build Custom DSDL Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'requirements_files/my_custom_libraries.txt'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Compile requirements
+        run: ./compile_image_python_requirements.sh golden-cpu-custom
+      
+      - name: Build image
+        run: ./build.sh golden-cpu-custom splunk/ 5.2.2
+      
+      - name: Scan image
+        run: ./scan_container.sh golden-cpu-custom splunk/ 5.2.2
+```
+
+**Paso 4: Scanning de Seguridad**
+
+**4.1 Escanear imagen antes de push:**
+```bash
+# Usando Trivy (incluido en scripts)
+./scan_container.sh golden-cpu-custom splunk/ 5.2.2
+
+# Output: scan_logs/golden-cpu-custom_scan.txt
+# Revisar vulnerabilidades críticas antes de continuar
+```
+
+**4.2 Verificar resultados:**
+- Si hay vulnerabilidades críticas → evaluar si proceder o corregir
+- Si solo hay vulnerabilidades menores → documentar y proceder
+
+**Paso 5: Push a Registry (GCP o Azure)**
+
+**Opción A: GCP - Artifact Registry**
+
+**5.1 Configurar autenticación:**
+```bash
+# Configurar gcloud CLI
+gcloud auth login
+gcloud auth configure-docker us-central1-docker.pkg.dev
+
+# O usar Service Account para CI/CD
+echo $GCP_SERVICE_ACCOUNT_KEY | docker login -u _json_key --password-stdin https://us-central1-docker.pkg.dev
+```
+
+**5.2 Tag imagen para Artifact Registry:**
+```bash
+# Formato: REGION-docker.pkg.dev/PROJECT/REPO/IMAGE:TAG
+docker tag splunk/golden-cpu-custom:5.2.2 \
+  us-central1-docker.pkg.dev/my-gcp-project/dsdl-images/golden-cpu-custom:5.2.2
+
+# O con tag semántico adicional
+docker tag splunk/golden-cpu-custom:5.2.2 \
+  us-central1-docker.pkg.dev/my-gcp-project/dsdl-images/golden-cpu-custom:latest
+```
+
+**5.3 Push a Artifact Registry:**
+```bash
+docker push us-central1-docker.pkg.dev/my-gcp-project/dsdl-images/golden-cpu-custom:5.2.2
+docker push us-central1-docker.pkg.dev/my-gcp-project/dsdl-images/golden-cpu-custom:latest
+```
+
+**5.4 Configurar IAM y permisos:**
+```bash
+# Otorgar permisos a servicio de cuentas para pull
+gcloud artifacts docker images add-iam-policy-binding \
+  us-central1-docker.pkg.dev/my-gcp-project/dsdl-images/golden-cpu-custom:5.2.2 \
+  --member="serviceAccount:gke-sa@my-gcp-project.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
+```
+
+**Opción B: Azure - Container Registry (ACR)**
+
+**5.1 Configurar autenticación:**
+```bash
+# Login a Azure
+az login
+
+# Login a ACR
+az acr login --name myacrregistry
+
+# O usar Service Principal para CI/CD
+az acr login --name myacrregistry --username $SP_APP_ID --password $SP_PASSWORD
+```
+
+**5.2 Tag imagen para ACR:**
+```bash
+# Formato: ACR_NAME.azurecr.io/IMAGE:TAG
+docker tag splunk/golden-cpu-custom:5.2.2 \
+  myacrregistry.azurecr.io/golden-cpu-custom:5.2.2
+
+# O con tag semántico adicional
+docker tag splunk/golden-cpu-custom:5.2.2 \
+  myacrregistry.azurecr.io/golden-cpu-custom:latest
+```
+
+**5.3 Push a ACR:**
+```bash
+docker push myacrregistry.azurecr.io/golden-cpu-custom:5.2.2
+docker push myacrregistry.azurecr.io/golden-cpu-custom:latest
+```
+
+**5.4 Configurar permisos (si necesario):**
+```bash
+# Otorgar permisos de lectura a servicio/cluster
+az acr repository show --name myacrregistry --repository golden-cpu-custom
+```
+
+**Paso 6: Actualizar Configuración en Splunk**
+
+**6.1 Copiar .conf generado:**
+```bash
+# El build.sh genera automáticamente:
+# images_conf_files/golden-cpu-custom.conf
+
+# Copiar a Splunk search head
+scp images_conf_files/golden-cpu-custom.conf \
+  splunk-server:/opt/splunk/etc/apps/mltk-container/local/images.conf
+
+# O editar manualmente en Splunk
+```
+
+**6.2 Editar images.conf en Splunk:**
+```ini
+# $SPLUNK_HOME/etc/apps/mltk-container/local/images.conf
+
+[golden-cpu-custom]
+# Para GCP Artifact Registry
+repo = us-central1-docker.pkg.dev/my-gcp-project/dsdl-images/
+image = golden-cpu-custom:5.2.2
+runtime = none
+short_name = Golden CPU Custom (con aeon)
+
+# O para Azure ACR
+# repo = myacrregistry.azurecr.io/
+# image = golden-cpu-custom:5.2.2
+```
+
+**6.3 Configurar autenticación en Kubernetes/GKE/AKS:**
+
+**Para GCP (GKE):**
+```bash
+# Crear secret para Artifact Registry
+kubectl create secret docker-registry gcp-artifact-registry-secret \
+  --docker-server=us-central1-docker.pkg.dev \
+  --docker-username=oauth2accesstoken \
+  --docker-password=$(gcloud auth print-access-token) \
+  --docker-email=not@val.id \
+  --namespace=splunk-dsdl
+```
+
+**Para Azure (AKS):**
+```bash
+# Crear secret para ACR
+kubectl create secret docker-registry azure-acr-secret \
+  --docker-server=myacrregistry.azurecr.io \
+  --docker-username=$SP_APP_ID \
+  --docker-password=$SP_PASSWORD \
+  --docker-email=not@val.id \
+  --namespace=splunk-dsdl
+```
+
+**6.4 Verificar configuración de pull secrets en deployments:**
+```yaml
+# Verificar que deployment/pod usa el secret
+apiVersion: v1
+kind: Pod
+spec:
+  imagePullSecrets:
+    - name: gcp-artifact-registry-secret  # o azure-acr-secret
+```
+
+**Paso 7: Recargar DSDL en Splunk**
+
+**7.1 Desde Splunk UI:**
+- Ir a **Configuration > Containers**
+- Click **Reload** o reiniciar contenedor
+
+**7.2 Desde CLI:**
+```bash
+# SSH a Splunk search head
+ssh splunk-server
+
+# Recargar configuración
+$SPLUNK_HOME/bin/splunk reload deploy-server -app mltk-container
+
+# O reiniciar Splunk (si es necesario)
+$SPLUNK_HOME/bin/splunk restart
+```
+
+**Paso 8: Notificar a Científico de Datos**
+
+**8.1 Confirmar disponibilidad:**
+- Actualizar Issue/ticket: "Librería agregada, imagen disponible"
+- Notificar: "Reinicia tu contenedor DSDL para usar nueva imagen"
+
+**8.2 Instrucciones para Cristian:**
+```
+1. Ir a Configuration > Containers en Splunk DSDL
+2. Seleccionar contenedor activo
+3. Click "Stop" → "Start" (o simplemente seleccionar nueva imagen)
+4. Al abrir JupyterLab, ejecutar: import aeon ✅
+```
+
+**Paso 9: Verificación y Rollback**
+
+**9.1 Verificar funcionamiento:**
+- Cristian confirma que `import aeon` funciona
+- Probar notebook con nueva librería
+- Si funciona → cerrar Issue/ticket
+
+**9.2 Rollback (si hay problemas):**
+```bash
+# Si nueva imagen tiene problemas, rollback a versión anterior
+# Editar images.conf en Splunk:
+[golden-cpu-custom]
+image = golden-cpu-custom:5.2.1  # Versión anterior
+
+# Reload DSDL
+```
+
+**Tiempos estimados del proceso:**
+
+| Paso | Tiempo | Automatizable |
+|------|--------|---------------|
+| Solicitud | - | - |
+| Preparar requirements | 5-10 min | ✅ Con CI/CD |
+| Build imagen | 20-40 min | ✅ Con CI/CD |
+| Scanning | 5-10 min | ✅ Con CI/CD |
+| Push a registry | 2-5 min | ✅ Con CI/CD |
+| Actualizar Splunk | 5-10 min | ⚠️ Parcial |
+| Reload DSDL | 1-2 min | ✅ Scriptable |
+| Verificación | 5-10 min | - |
+| **Total manual** | **45-90 min** | - |
+| **Total con CI/CD** | **15-30 min** (más rápido) | - |
+
+**Automatización recomendada (CI/CD):**
+
+**GitHub Actions workflow completo:**
+```yaml
+name: Build and Deploy Custom DSDL Image
+
+on:
+  push:
+    paths:
+      - 'requirements_files/my_custom_libraries.txt'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v2
+      
+      # GCP Auth
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+      
+      # Build
+      - name: Compile requirements
+        run: ./compile_image_python_requirements.sh golden-cpu-custom
+      
+      - name: Build image
+        run: ./build.sh golden-cpu-custom splunk/ ${{ github.sha }}
+      
+      # Security scan
+      - name: Scan image
+        run: ./scan_container.sh golden-cpu-custom splunk/ ${{ github.sha }}
+      
+      # Push to GCP Artifact Registry
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+      
+      - name: Tag and push
+        run: |
+          docker tag splunk/golden-cpu-custom:${{ github.sha }} \
+            us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/dsdl-images/golden-cpu-custom:${{ github.sha }}
+          docker tag splunk/golden-cpu-custom:${{ github.sha }} \
+            us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/dsdl-images/golden-cpu-custom:latest
+          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/dsdl-images/golden-cpu-custom:${{ github.sha }}
+          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/dsdl-images/golden-cpu-custom:latest
+      
+      # Notify (Slack, email, etc.)
+      - name: Notify team
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: 'Custom DSDL image built and deployed'
+```
+
+**Azure DevOps pipeline equivalente:**
+```yaml
+# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - requirements_files/my_custom_libraries.txt
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: Docker@2
+  displayName: 'Build custom image'
+  inputs:
+    command: 'build'
+    dockerfile: 'dockerfiles/Dockerfile.debian.golden-cpu'
+    tags: |
+      $(ACR_NAME).azurecr.io/golden-cpu-custom:$(Build.BuildId)
+      $(ACR_NAME).azurecr.io/golden-cpu-custom:latest
+
+- task: AzureContainerRegistry@1
+  displayName: 'Push to ACR'
+  inputs:
+    azureSubscription: 'Azure-ServiceConnection'
+    azureContainerRegistry: '$(ACR_NAME)'
+    action: 'Push an image'
+```
+
+**Mejores prácticas DevOps:**
+
+1. **Versionado:**
+   - Usar versiones semánticas: `5.2.2`, `5.2.2-aeon-v1`
+   - Tag con commit SHA: `5.2.2-abc123`
+   - Mantener `latest` para versión actual estable
+
+2. **Repositorio Git interno:**
+   - Fork del repositorio oficial en Git interno
+   - Branch por librería/proyecto: `feature/aeon-support`
+   - Pull requests para revisión antes de merge
+
+3. **Documentación:**
+   - Mantener changelog de librerías agregadas
+   - Documentar versiones específicas
+   - Registrar dependencias entre librerías
+
+4. **Seguridad:**
+   - Scanning automático en CI/CD
+   - Bloquear deploy si hay vulnerabilidades críticas
+   - Rotar credenciales regularmente
+
+5. **Monitoring:**
+   - Alertas si build falla
+   - Métricas de uso de imágenes
+   - Logs de deployments
+
+**Resumen del flujo automatizado:**
+
+```
+1. Científico agrega librería a requirements (PR)
+   ↓
+2. CI/CD detecta cambio automáticamente
+   ↓
+3. Build → Scan → Push a registry (GCP/Azure)
+   ↓
+4. Actualiza images.conf automáticamente (o notifica)
+   ↓
+5. Notifica a científico que está listo
+   ↓
+6. Científico reinicia contenedor → usa nueva librería ✅
+```
+
+**Tiempo total con automatización: 15-30 minutos** (vs 45-90 minutos manual)
+
+### 9.6 Perspectiva del Científico de Datos: Flujo de Trabajo Real con DSDL
 
 **Contexto:** Cristian (científico de datos) trabaja en un proyecto de autoencoder para detección de anomalías. Los datos están en Splunk, DSDL está implementado, y los contenedores están corriendo (no le interesa dónde ni cómo).
 
