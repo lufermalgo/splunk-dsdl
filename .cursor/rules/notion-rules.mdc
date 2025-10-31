@@ -1,0 +1,331 @@
+---
+alwaysApply: true
+---
+# Guía operativa IA MCP + Notion (Markdown)
+
+# Guía operativa para tu IA MCP con Notion
+
+Este documento ofrece “recetas” claras para que tu IA interactúe con Notion usando Notion‑flavored Markdown y las herramientas MCP: search, fetch, update-page, create-pages, update-database y query-data-sources. Adapta NOMBRES DE PROPIEDADES y URLs a tu espacio.
+
+---
+
+## Convenciones
+
+- Sustituye lo que esté entre <> por tus valores reales.
+- Cuando ya tengas una URL, usa fetch primero para cargarla en memoria antes de actualizar.
+- Para páginas fuera de data sources, solo se puede editar la propiedad "title".
+- Para páginas dentro de data sources, respeta los tipos y nombres exactos de columnas.
+
+---
+
+## 1) Agregar una nueva idea a la base de datos “Ideas”
+
+Suposiciones de esquema (ajústalas a tu DB):
+
+- "Idea" (title)
+- "Status" (status) con opciones como "Backlog", "En progreso", "Hecho"
+- "Prioridad" (select)
+- "Tags" (multi_select)
+- "Descripción" (text)
+- "Autor" (person, opcional)
+1. Buscar el data source de “Ideas” si no tienes su URL
+
+```json
+{"default":{"questions":["¿Dónde está la base de datos o data source llamado 'Ideas' en mi espacio?"]}}
+```
+
+1. Cargar el database o data source si ya tienes la URL
+
+```json
+{"urls":["URL_DEL_DATABASE_O_DATA_SOURCE"]}
+```
+
+1. Crear una nueva idea en el data source
+
+```json
+{
+  "parentDataSourceUrl":"URL_DATA_SOURCE_IDEAS",
+  "pages":[
+    {
+      "properties":{
+        "Idea":"<Título de la idea>",
+        "Status":"Backlog",
+        "Prioridad":"Media",
+        "Tags":["producto","UX"],
+        "Descripción":"<Breve descripción de la idea>",
+        "Autor":["<USER_ID_OPCIONAL>"]
+      }
+    }
+  ]
+}
+```
+
+Verificación rápida vía SQL (opcional):
+
+```json
+{
+  "mode":"sql",
+  "dataSourceUrls":["URL_DATA_SOURCE_IDEAS"],
+  "query":"SELECT url, \"Idea\", \"Status\", \"Prioridad\", \"Tags\", \"Descripción\" FROM \"URL_DATA_SOURCE_IDEAS\" ORDER BY \"created_time\" DESC LIMIT 5"
+}
+```
+
+---
+
+## 2) Actualizar la documentación de un prototipo en “Prototipos”
+
+Suposiciones comunes:
+
+- "Nombre" (title)
+- "Status" (status)
+- "Figma" (url)
+- "Documento" (text largo) o documentación en el contenido de la página
+- "Última actualización" (date)
+
+A) Si la documentación vive en la página del prototipo
+
+1. Buscar el prototipo por nombre
+
+```json
+{"default":{"questions":["Buscar en 'Prototipos' el prototipo con nombre '<Nombre del prototipo>'"]}}
+```
+
+1. Cargar la página del prototipo
+
+```json
+{"urls":["URL_PAGINA_PROTOTIPO"]}
+```
+
+1. Insertar sección de cambios bajo “## Documentación”
+
+```json
+{
+  "pageUrl":"URL_PAGINA_PROTOTIPO",
+  "command":"insertContentAfter",
+  "selectionStart":"## Documentación",
+  "selectionEnd":"## Documentación",
+  "newStr":"### Cambios del <mention-date start=\"2025-10-31\"/>\n- Ajuste de navegación en el flujo de onboarding\n- Corrección de contrastes en botones primarios\n\n### Notas\n- Prototipo listo para test A/B la próxima semana"
+}
+```
+
+B) Si la documentación vive en una propiedad “Documento”
+
+```json
+{
+  "pageUrl":"URL_PAGINA_ITEM_PROTOTIPO",
+  "command":"updateProperties",
+  "properties":{
+    "Documento":"## Resumen\nSe actualizó el flujo de registro.\n\n## Detalles\n1. Onboarding simplificado\n2. Validaciones en tiempo real\n",
+    "date:Última actualización:start":"2025-10-31"
+  }
+}
+```
+
+---
+
+## 3) Patrones de edición de contenido de página (Notion‑flavored Markdown)
+
+- Inserción después de un bloque único:
+
+```json
+{
+  "pageUrl":"URL_PAGINA",
+  "command":"insertContentAfter",
+  "selectionStart":"### Resumen",
+  "selectionEnd":"### Resumen",
+  "newStr":"- [ ] Validar copy con marketing\n- [x] Subir versión 0.2 a Figma"
+}
+```
+
+- Reemplazo puntual:
+
+```json
+{
+  "pageUrl":"URL_PAGINA",
+  "command":"replaceContentRange",
+  "selectionStart":"Anterior versión: 0.1",
+  "selectionEnd":"Anterior versión: 0.1",
+  "newStr":"Anterior versión: 0.2"
+}
+```
+
+- Reemplazo total del contenido (úsalo con cuidado):
+
+```json
+{
+  "pageUrl":"URL_PAGINA",
+  "command":"replaceContent",
+  "newStr":"> Documento vivo\n\n## Objetivo\n...\n\n## Entregables\n- ..."
+}
+```
+
+Notas:
+
+- Usa tabs para indentar hijos en toggles, callouts y columnas.
+- En tablas, formatea texto con Markdown, no HTML.
+
+---
+
+## 4) Crear vistas y configurar filtros en bases de datos
+
+Ejemplo: vista “Backlog” filtrada por Status = Backlog
+
+```json
+{
+  "databaseUrl":"URL_DATABASE_IDEAS",
+  "viewRequirements":"- Crear una vista tipo Table llamada \"Backlog\" basada en el data source URL_DATA_SOURCE_IDEAS filtrada por \"Status\" = \"Backlog\".\n- Ordenar por \"Última edición\" descendente."
+}
+```
+
+Ejemplo: vista Calendar usando “Última actualización”
+
+```json
+{
+  "databaseUrl":"URL_DATABASE_PROTOTIPOS",
+  "viewRequirements":"- Crear una vista tipo Calendar llamada \"Calendario de updates\" basada en URL_DATA_SOURCE_PROTOTIPOS usando la propiedad de fecha \"Última actualización\"."
+}
+```
+
+---
+
+## 5) Búsqueda y selección segura antes de editar
+
+Encontrar una idea por título y obtener su URL:
+
+```json
+{
+  "mode":"sql",
+  "dataSourceUrls":["URL_DATA_SOURCE_IDEAS"],
+  "query":"SELECT url, \"Idea\", \"Status\", \"Prioridad\", \"created_time\" FROM \"URL_DATA_SOURCE_IDEAS\" WHERE \"Idea\" = ? ORDER BY \"created_time\" DESC LIMIT 1",
+  "params":["<Título de la idea>"]
+}
+```
+
+Cargar el resultado:
+
+```json
+{"urls":["URL_RESULTADO_0_url"]}
+```
+
+---
+
+## 6) Formatos de valores de propiedades
+
+- title, text, url, email, phone_number: string
+- number: número
+- checkbox: true o false
+- select: string exacto de una opción
+- multi_select: arreglo de strings
+- status: string exacto de una opción
+- person: arreglo de user IDs como strings
+- relation: arreglo de URLs de páginas
+- date:
+    - date:PROPNAME:start: "YYYY-MM-DD" o ISO datetime
+    - date:PROPNAME:end: opcional
+    - date:PROPNAME:is_datetime: 0 o 1
+- place: incluye latitude y longitude en la misma actualización cuando cambies algo
+
+Ejemplo de date:
+
+```json
+{
+  "pageUrl":"URL_PAGINA",
+  "command":"updateProperties",
+  "properties":{
+    "date:Deadline:start":"2025-11-15"
+  }
+}
+```
+
+---
+
+## 7) Errores comunes y cómo resolverlos
+
+- Opción inexistente en select/status: crea primero la opción en Notion o usa una existente exacta.
+- selectionStart no es único: añade más texto antes y después para que el fragmento sea único.
+- Propiedad inexistente: inspecciona el esquema con query-data-sources o confirma en la UI.
+- Página no encontrada: ejecuta fetch con la URL exacta antes de update-page.
+
+---
+
+## 8) Ejemplos listos para copiar
+
+A) Nueva Idea minimal
+
+```json
+{
+  "parentDataSourceUrl":"URL_DATA_SOURCE_IDEAS",
+  "pages":[{"properties":{"Idea":"Explorar pricing por uso","Status":"Backlog"}}]
+}
+```
+
+B) Idea con propiedades extendidas
+
+```json
+{
+  "parentDataSourceUrl":"URL_DATA_SOURCE_IDEAS",
+  "pages":[
+    {
+      "properties":{
+        "Idea":"Integración con pasarela X",
+        "Status":"Backlog",
+        "Prioridad":"Alta",
+        "Tags":["pagos","infra"],
+        "Descripción":"Permitir pagos en un clic con tokenización",
+        "Autor":["[user://4254e4bb-aeee-4659-8c60-5632b37032d9](user://4254e4bb-aeee-4659-8c60-5632b37032d9)"]
+      }
+    }
+  ]
+}
+```
+
+C) Actualizar doc de prototipo en contenido de página
+
+```json
+{
+  "pageUrl":"URL_PAGINA_PROTOTIPO",
+  "command":"insertContentAfter",
+  "selectionStart":"## Documentación",
+  "selectionEnd":"## Documentación",
+  "newStr":"### Cambios del <mention-date start=\"2025-10-31\"/>\n- Reorganización del header\n- Nuevo estado de carga\n"
+}
+```
+
+D) Actualizar propiedades del prototipo
+
+```json
+{
+  "pageUrl":"URL_ITEM_DS_PROTOTIPOS",
+  "command":"updateProperties",
+  "properties":{
+    "Figma":"[https://www.figma.com/file/XXXX](https://www.figma.com/file/XXXX)",
+    "Status":"En pruebas",
+    "date:Última actualización:start":"2025-10-31"
+  }
+}
+```
+
+---
+
+## 9) Buenas prácticas
+
+- Cuando cites usuarios en contenido, usa mention-user con URL: @Luis Fernando Maldonado Arango.
+- Idempotencia: antes de crear, verifica si ya existe un registro por título.
+- Prefiere insertContentAfter o replaceContentRange sobre replaceContent en páginas no vacías.
+- Para actualizaciones grandes, carga todo con fetch primero y agrupa los cambios por página.
+
+---
+
+## 10) Checklist de preparación
+
+- Reunir:
+    - URL del Data Source de “Ideas” y “Prototipos”
+    - Nombres exactos de propiedades y tipos
+    - Opciones válidas de select/status
+- Probar:
+    - Crear 1 ítem de prueba en “Ideas”
+    - Actualizar 1 prototipo con sección “Cambios”
+    - Crear 1 vista filtrada por Status
+- Validar:
+    - Revisar en Notion columnas y contenido
+    - Ajustar nombres de propiedades si hubo diferencias
