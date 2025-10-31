@@ -1,5 +1,7 @@
 # Análisis Comparativo: Necesidades de Científicos de Datos vs. Capacidades de Splunk DSDL
 
+**Repositorio GitHub**: https://github.com/lufermalgo/splunk-dsdl.git
+
 ## Resumen Ejecutivo
 
 Este documento compara las capacidades técnicas requeridas por el científico de datos (Cristian) que trabaja con autoencoders y modelos de deep learning para detección de anomalías en procesos industriales, con las capacidades que ofrece Splunk DSDL 5.2.2.
