@@ -4,7 +4,7 @@
 
 ## Control de Versiones
 
-**Versión actual**: 1.0.0  
+**Versión actual**: 1.0.1  
 **Última actualización**: 2025-01-31  
 **Mantenido por**: Equipo DSDL
 
@@ -1280,6 +1280,539 @@ El POC es **viable** con las siguientes condiciones:
 
 ---
 
+## 11. Arquitectura y Operación de Contenedores
+
+### 11.1 Relación Modelo-Contenedor
+
+**Arquitectura fundamental de DSDL:**
+- **1 modelo = 1 contenedor**: Cada modelo entrenado requiere un contenedor dedicado
+- **Modelos atómicos**: No se pueden compartir contenedores entre múltiples modelos
+- **Modelo Global**: Si un modelo se comparte, debe tener permisos `Global`
+
+### 11.2 Diferenciación por Arquitectura de Procesamiento
+
+Las imágenes Docker en DSDL se diferencian principalmente por el tipo de aceleración hardware:
+
+| Imagen | Arquitectura | Runtime | Librerías Incluidas |
+|--------|--------------|---------|---------------------|
+| `golden-cpu` | CPU | `none` | TensorFlow CPU, PyTorch CPU, sklearn, Pandas, NumPy |
+| `golden-gpu` | GPU (NVIDIA) | `nvidia` | TensorFlow GPU, PyTorch GPU, CUDA, cuDNN, sklearn, Pandas, NumPy |
+| `golden-cpu-custom` | CPU + Custom | `none` | Golden CPU + librerías custom (ej: aeon) |
+| `golden-gpu-custom` | GPU + Custom | `nvidia` | Golden GPU + librerías custom |
+
+**Nota**: TPU (Google) y NPU no están soportados oficialmente. Solo NVIDIA GPU.
+
+**Ejemplo de uso:**
+```spl
+# Modelo CPU
+| fit MLTKContainer algo=randomforest 
+  container_image="splunk/golden-cpu:5.2.2" 
+  runtime="none"
+  into app:Model1
+
+# Modelo GPU
+| fit MLTKContainer algo=autoencoder 
+  container_image="splunk/golden-gpu:5.2.2" 
+  runtime="nvidia"
+  into app:Model2
+
+# Modelo Custom CPU
+| fit MLTKContainer algo=segmentacion 
+  container_image="splunk/golden-cpu-custom:5.2.2" 
+  runtime="none"
+  into app:Model3
+```
+
+### 11.3 Escalabilidad y Rendimiento
+
+**Múltiples modelos requeridos:**
+- Si tienes 5 modelos, DSDL crea 5 contenedores separados
+- Cada contenedor puede usar la misma imagen base o diferentes
+
+**Gestión de demanda alta:**
+
+**En Docker (single host):**
+- ⚠️ Limitado a 1 contenedor por host
+- Si el contenedor está saturado → requests se encolan
+- Impacto en Splunk: Latencia alta o timeouts
+
+**En Kubernetes/OpenShift:**
+- ✅ Escalabilidad horizontal automática (HPA)
+- Múltiples réplicas del mismo contenedor para alto tráfico
+- Load balancing automático entre pods
+- No impacta a Splunk (mejor performance)
+
+**Ejemplo HPA:**
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+spec:
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+---
+
+## 12. Gobernanza y Colaboración Entre Científicos de Datos
+
+### 12.1 Acceso Compartido a JupyterLab
+
+**Limitación arquitectónica:**
+- **Mismo contenedor DEV**: Todos los científicos acceden a la misma instancia de JupyterLab
+- **Sin aislamiento**: Todos ven los notebooks de otros científicos
+- **Riesgo de sobrescritura**: Si dos científicos usan el mismo nombre de archivo
+
+**Ubicación de notebooks:**
+- `/srv/notebooks/` (o `/srv/app/model/` en versiones anteriores)
+- Volúmenes persistentes para persistencia entre reinicios
+
+### 12.2 Control de Acceso y Permisos
+
+**Roles disponibles:**
+
+| Rol | Capacidades |
+|-----|-------------|
+| `mltk_container_user` | Listar modelos, iniciar/detener contenedores |
+| `mltk_container_admin` | Todo lo anterior + configurar setup, settings |
+
+**Model sharing:**
+
+| Nivel | Visibilidad |
+|-------|-------------|
+| **User** | Solo el creador (por defecto) |
+| **App** | Usuarios de la misma app Splunk |
+| **Global** | Todos en la plataforma (producción/HPC) |
+
+**Convención recomendada:**
+```spl
+# Desarrollo privado
+| fit MLTKContainer algo=Cristian_Autoencoder_Horno4_v1 
+  into app:Cristian_Autoencoder_Horno4_v1
+
+# Producción compartida
+| fit MLTKContainer algo=Cristian_Autoencoder_Horno4_v1 
+  into app:AutoencoderHorno4_GLOBAL
+```
+
+### 12.3 Estándar de Nombrado Requerido
+
+**Porque es crítico:**
+- Sin naming conventions → colisiones y sobrescrituras
+- Difícil rastrear modelos de diferentes científicos
+- Imposible versionar efectivamente
+
+**Formato recomendado:**
+```
+Usuario_TipoModelo_CasoUso_Version.ipynb
+
+Ejemplos:
+- Cristian_Autoencoder_Horno4_v1.ipynb
+- Maria_RandomForest_Fallos_v1.ipynb
+- Pedro_ARIMA_Forecasting_v2.ipynb
+```
+
+**Uso en comandos:**
+```spl
+| fit MLTKContainer algo=Cristian_Autoencoder_Horno4_v1 
+  into app:Cristian_Autoencoder_Horno4_v1
+        ↑                           ↑
+    Mismo nombre del archivo .ipynb
+```
+
+### 12.4 Desarrollo desde IDE Local
+
+**Limitación:**
+- ❌ **NO soportado oficialmente**: Desarrollo exclusivo en JupyterLab browser
+- Alternativa: Trabajo manual con Git (clonar → editar local → push)
+
+**Flujo alternativo (no recomendado):**
+```
+1. Descargar .ipynb desde JupyterLab
+2. Editar en VS Code / PyCharm localmente
+3. Subir de nuevo a JupyterLab
+4. Guardar y usar
+```
+
+**Flujo recomendado:**
+```
+1. Trabajar directamente en JupyterLab del contenedor
+2. Usar git desde terminal JupyterLab para versionado
+3. Beneficios: Datos accesibles, librerías disponibles, sin desincronización
+```
+
+---
+
+## 13. Versionado de Modelos
+
+### 13.1 Limitaciones de Versionado en DSDL
+
+**Lo que NO tiene DSDL:**
+- ❌ Versionado automático de modelos
+- ❌ Comparación A/B automática
+- ❌ Rollback automático a versiones anteriores
+- ❌ Model registry centralizado
+
+**Implicación:**
+```spl
+# Si usas el mismo nombre de modelo, DSDL sobrescribe
+| fit ... into app:MyModel     # Primera versión
+| fit ... into app:MyModel     # ❌ SOBRESCRIBE la anterior
+
+# Versionado manual requerido
+| fit ... into app:MyModel_v1  # Versión 1
+| fit ... into app:MyModel_v2  # Versión 2 (separado)
+```
+
+### 13.2 Solución: Git/Azure DevOps Integrado
+
+**Posibilidad:**
+- ✅ Git está disponible desde terminal de JupyterLab
+- ✅ Puedes clonar repositorio Azure DevOps / GitHub / GitLab
+- ✅ Commits, pushes, pull requests funcionan normalmente
+
+**Flujo recomendado:**
+```bash
+# Desde terminal JupyterLab
+cd /srv/notebooks
+git clone https://dev.azure.com/empresa/dsdl-notebooks.git
+cd dsdl-notebooks
+
+# Editar notebook
+# git add .
+# git commit -m "Add Cristian_Autoencoder_Horno4_v1"
+# git push
+```
+
+**Estructura sugerida de repositorio:**
+```
+dsdl-notebooks/
+├── notebooks/
+│   ├── Cristian_Autoencoder_Horno4_v1.ipynb
+│   ├── Maria_RandomForest_Fallos_v1.ipynb
+│   └── Pedro_ARIMA_Forecasting_v2.ipynb
+├── templates/
+│   └── template_empresa_base.ipynb
+└── helpers/
+    ├── telemetry_helper.py
+    └── metrics_calculator.py
+```
+
+### 13.3 Comparación A/B Manual
+
+**Proceso:**
+```spl
+# Entrenar dos versiones
+| fit ... into app:AutoencoderHorno4_v1
+| fit ... into app:AutoencoderHorno4_v2
+
+# Aplicar ambas a datos de prueba
+| apply AutoencoderHorno4_v1 | eval version="v1" | outputto index=test_results
+| apply AutoencoderHorno4_v2 | eval version="v2" | outputto index=test_results
+
+# Comparar métricas
+index=test_results
+| stats avg(anomaly_score), count by version
+| eval diff = v1_score - v2_score
+```
+
+**Limitación:** Todo debe hacerse manualmente. No hay dashboard automático.
+
+---
+
+## 14. Observabilidad y Monitoreo de Modelos
+
+### 14.1 Telemetría Automática de DSDL
+
+**Lo que DSDL captura automáticamente:**
+
+| Métrica | Descripción | Integración |
+|---------|-------------|-------------|
+| **CPU/Memoria** | Uso de recursos del contenedor | Splunk Observability Cloud |
+| **GPU** | Uso de GPUs (si NVIDIA) | Observability + device plugin |
+| **Latencia** | Tiempo de respuesta de requests | OpenTelemetry traces |
+| **Errores** | Excepciones y crash loops | Container logs → Splunk |
+| **Throughput** | Request/segundo | Observability metrics |
+
+**Configuración:**
+1. DSDL → Setup → Observability Settings
+2. Enable Observability
+3. Agregar Splunk Observability Access Token
+4. Configurar endpoint OpenTelemetry
+
+**Resultado:** Instrumentación automática. No requiere código adicional.
+
+### 14.2 Métricas de Negocio (Limitación)
+
+**Lo que NO captura automáticamente:**
+
+| Métrica | Requerimiento |
+|---------|---------------|
+| **R²** | Implementación manual |
+| **Accuracy** | Implementación manual |
+| **Precision/Recall/F1** | Implementación manual |
+| **MAE/RMSE** | Implementación manual |
+| **Model drift** | Implementación manual |
+| **Training loss per epoch** | Implementación manual |
+
+**Limitación crítica:**
+- Científicos de datos DEBEN implementar estas métricas manualmente
+- Sin template → cada científico reimplementa
+- Sin estándar → métricas inconsistentes entre proyectos
+
+### 14.3 Solución Propuesta: Template Base + Helpers
+
+**Estructura de imagen custom:**
+
+```
+golden-cpu-empresa:5.2.2
+├── /mnt/srv/notebooks/
+│   ├── barebone_template.ipynb          # Original Splunk
+│   ├── template_empresa_base.ipynb      # ⭐ TU TEMPLATE
+│   └── helpers/
+│       ├── telemetry_helper.py          # HEC logging automático
+│       ├── metrics_calculator.py        # R², Accuracy, F1, etc.
+│       ├── preprocessor.py              # Preprocesamiento estándar
+│       └── splunk_connector.py          # SplunkSearch reusable
+```
+
+**Ejemplo de template_empresa_base.ipynb:**
+
+**Cell 1: Imports con helpers**
+```python
+import pandas as pd
+import numpy as np
+import joblib
+from sklearn.metrics import r2_score, accuracy_score, f1_score
+from dsdlsupport import SplunkHEC, SplunkSearch
+
+# ✅ Helpers custom incluidos
+import sys
+sys.path.append('/mnt/srv/notebooks/helpers')
+from telemetry_helper import log_metrics, log_training_step
+from metrics_calculator import calculate_all_metrics
+```
+
+**Cell 2: fit() con telemetría**
+```python
+def fit(df, epochs=50, batch_size=32, **kwargs):
+    # Preprocesamiento estándar
+    X_processed, scaler = standard_preprocessing(df)
+    
+    # Científico SOLO agrega su modelo
+    model = crear_su_modelo_especifico(X_processed.shape[1])
+    history = model.fit(X_processed, X_processed, epochs=epochs)
+    
+    # ✅ Telemetría automática
+    log_training_step(
+        model_name=kwargs.get('model_name', 'default'),
+        epoch=epochs,
+        loss=history.history['loss'][-1]
+    )
+    
+    model.save('/srv/app/model/modelo.h5')
+    joblib.dump(scaler, '/srv/app/model/scaler.pkl')
+    return {"status": "trained"}
+```
+
+**Cell 3: apply() con métricas**
+```python
+def apply(df, **kwargs):
+    model = keras.models.load_model('/srv/app/model/modelo.h5')
+    scaler = joblib.load('/srv/app/model/scaler.pkl')
+    X_processed = scaler.transform(df)
+    predictions = model.predict(X_processed)
+    
+    # ✅ Métricas automáticas si ground_truth existe
+    if 'ground_truth' in df.columns:
+        metrics = calculate_all_metrics(df['ground_truth'], predictions)
+        log_metrics(
+            model_name=kwargs.get('model_name', 'default'),
+            **metrics  # R², accuracy, F1, precision, recall, MAE, RMSE
+        )
+    
+    return resultados
+```
+
+**helpers/telemetry_helper.py:**
+```python
+from dsdlsupport import SplunkHEC
+
+_hec = None
+
+def init_hec():
+    global _hec
+    if _hec is None:
+        _hec = SplunkHEC.SplunkHEC()
+    return _hec
+
+def log_metrics(model_name, r2=None, accuracy=None, f1=None, **kwargs):
+    hec = init_hec()
+    hec.send({'event': {
+        'event_type': 'model_metrics',
+        'model_name': model_name,
+        'r2_score': r2,
+        'accuracy': accuracy,
+        'f1_score': f1,
+        **kwargs
+    }})
+
+def log_training_step(model_name, epoch, loss, project):
+    hec = init_hec()
+    hec.send({'event': {
+        'event_type': 'training_step',
+        'model_name': model_name,
+        'epoch': epoch,
+        'loss': loss,
+        'project': project
+    }})
+```
+
+**helpers/metrics_calculator.py:**
+```python
+from sklearn.metrics import r2_score, accuracy_score, f1_score
+from sklearn.metrics import precision_score, recall_score
+import numpy as np
+
+def calculate_all_metrics(y_true, y_pred):
+    return {
+        'r2': r2_score(y_true, y_pred),
+        'accuracy': accuracy_score(y_true, y_pred),
+        'f1': f1_score(y_true, y_pred, average='weighted'),
+        'precision': precision_score(y_true, y_pred, average='weighted'),
+        'recall': recall_score(y_true, y_pred, average='weighted'),
+        'mae': np.mean(np.abs(y_true - y_pred)),
+        'rmse': np.sqrt(np.mean((y_true - y_pred)**2))
+    }
+```
+
+### 14.4 Dashboard de Monitoreo en Splunk
+
+**Búsqueda ejemplo:**
+```spl
+index=ml_metrics event_type="model_metrics"
+| timechart span=1h 
+    avg(r2_score) as avg_r2,
+    avg(accuracy) as avg_accuracy,
+    avg(f1_score) as avg_f1
+  by model_name
+```
+
+**Alert para model drift:**
+```spl
+index=ml_metrics event_type="model_metrics"
+| stats latest(r2_score) as current_r2, latest(accuracy) as current_accuracy by model_name
+| eval drift_r2 = if(current_r2 < 0.85, 1, 0)
+| eval drift_acc = if(current_accuracy < 0.90, 1, 0)
+| where drift_r2=1 OR drift_acc=1
+| eval alert_message="Model drift detected: " + model_name
+```
+
+---
+
+## 15. Recomendaciones Operacionales
+
+### 15.1 Imagen Docker Custom Empresarial
+
+**Objetivo:** Crear una imagen base que contenga todo lo necesario para que los científicos de datos se concentren SOLO en desarrollar modelos, sin preocuparse por:
+- Configuración de telemetría
+- Implementación de métricas
+- Preprocesamiento estándar
+- Conexión a Splunk
+- Logging estructurado
+
+**Proceso de creación:**
+
+**1. Fork repositorio base:**
+```bash
+git clone https://github.com/splunk/splunk-mltk-container-docker
+cd splunk-mltk-container-docker
+```
+
+**2. Agregar librerías custom a requirements:**
+```text
+# requirements_files/empresa_custom.txt
+aeon>=0.5.0
+# Otras librerías específicas de la empresa
+```
+
+**3. Actualizar tag_mapping.csv:**
+```csv
+Tag,base_image,dockerfile,base_requirements,specific_requirements,runtime,requirements_dockerfile
+golden-cpu-empresa,deb:bullseye,Dockerfile.debian.golden-cpu,base_functional.txt,empresa_custom.txt,none,Dockerfile.debian.requirements
+```
+
+**4. Crear template y helpers:**
+
+**Antes de build**, agregar archivos:
+```
+splunk-mltk-container-docker/
+├── notebooks_custom/
+│   ├── template_empresa_base.ipynb
+│   └── helpers/
+│       ├── telemetry_helper.py
+│       ├── metrics_calculator.py
+│       ├── preprocessor.py
+│       └── splunk_connector.py
+```
+
+**5. Modificar Dockerfile para copiar archivos custom:**
+```dockerfile
+# En el Dockerfile, agregar antes del COPY de notebooks originales:
+COPY notebooks_custom/ /mnt/srv/notebooks/
+```
+
+**6. Build imagen custom:**
+```bash
+./build.sh golden-cpu-empresa splunk/ 5.2.2
+```
+
+**7. Push a registry:**
+```bash
+docker tag splunk/golden-cpu-empresa:5.2.2 \
+  us-central1-docker.pkg.dev/project/repo/golden-cpu-empresa:5.2.2
+docker push us-central1-docker.pkg.dev/project/repo/golden-cpu-empresa:5.2.2
+```
+
+### 15.2 Workflow del Científico de Datos
+
+**Con imagen custom:**
+```
+1. Abrir JupyterLab
+2. Abrir template_empresa_base.ipynb
+3. File → Save As → Cristian_Autoencoder_Horno4_v1.ipynb
+4. Editar SOLO la función de modelo específico
+5. Guardar
+6. Usar: | fit MLTKContainer algo=Cristian_Autoencoder_Horno4_v1
+```
+
+**Sin tocar:**
+- ✅ Telemetría (ya configurada)
+- ✅ Métricas (helpers incluidos)
+- ✅ Preprocesamiento (estándar)
+- ✅ Conexión Splunk (configurada)
+- ✅ Logging (automático)
+
+### 15.3 Mejores Prácticas Resumidas
+
+| Práctica | Implementación |
+|----------|----------------|
+| **Estándar de nombrado** | `Usuario_TipoModelo_CasoUso_Version.ipynb` |
+| **Template base** | Incluir en imagen custom con telemetría preconfigurada |
+| **Git integrado** | Clonar repo desde terminal JupyterLab |
+| **Model permissions** | User (dev) → Global (producción) |
+| **Versionado** | Convención de nombres + Git |
+| **Observabilidad** | Splunk Observability + HEC para métricas negocio |
+| **Separación DEV/PROD** | Containers DEV con JupyterLab, PROD minimal |
+
+---
+
 ## Historial de Versiones
 
 ### Versión 1.0.0 (2025-01-31)
@@ -1326,4 +1859,71 @@ El POC es **viable** con las siguientes condiciones:
 ---
 
 **Próxima versión planificada**: 1.1.0 (validaciones prácticas en sandbox)
+
+### Versión 1.0.1 (2025-01-31)
+
+**Estado**: Actualización arquitectónica operacional
+
+**Estado**: Actualización con hallazgos arquitectónicos y operacionales
+
+**Nuevas secciones agregadas:**
+
+**1. Arquitectura y Operación de Contenedores (Sección 11)**
+
+- **Arquitectura de Contenedores**: 1 modelo = 1 contenedor
+  - Explicación de la relación modelo-contenedor
+  - Diferenciación por arquitectura (CPU vs GPU/NVIDIA)
+  - Imágenes disponibles: Golden CPU, Golden GPU, Custom variants
+
+- **Gobernanza y Colaboración (Sección 12)**
+  - **Acceso compartido a JupyterLab**: Limitación - Mismo contenedor para todos los científicos
+  - **Control de acceso**: Roles (`mltk_container_user`, `mltk_container_admin`)
+  - **Model sharing**: Permisos User/App/Global
+  - **Estándar de nombrado requerido**: `Usuario_TipoModelo_CasoUso_Version.ipynb`
+  - **Desarrollo desde IDE local**: NO soportado (desarrollo exclusivo en JupyterLab)
+
+- **Versionado de Modelos (Sección 13)**
+  - **Versionado manual**: No hay versionado automático en DSDL
+  - **Git/Azure DevOps integrado**: Sí posible desde terminal JupyterLab
+  - **Práctica recomendada**: Convención de nombres + Git para código
+  - **Limitación**: No hay comparación A/B o rollback automático
+  - **Alternativa**: Proceso manual de versionado con nombres diferentes (`v1`, `v2`, etc.)
+
+- **Observabilidad y Monitoreo (Sección 14)**
+  - **Telemetría automática DSDL**: CPU, memoria, GPU, latencia, errores
+  - **Integración**: Splunk Observability Cloud + HEC
+  - **Limitación**: Métricas de negocio (R², Accuracy, F1) NO automáticas
+  - **Solución propuesta**: Template base con helpers de telemetría
+  - **Imagen custom recomendada**: Incluir helpers estandarizados
+
+**2. Recomendaciones Operacionales (Sección 15)**
+
+- **Imagen Docker Custom Empresarial**
+  - Estructura propuesta para golden-cpu-empresa:5.2.2
+  - Template base con telemetría integrada
+  - Helpers reutilizables para científicos de datos
+  - Preprocesamiento estandarizado
+  - Configuración Git/Azure DevOps incluida
+
+**Limitaciones Arquitectónicas Identificadas:**
+
+| Limitación | Descripción | Impacto |
+|------------|-------------|---------|
+| **JupyterLab compartido** | Mismo contenedor DEV para todos los científicos | Alto - Riesgo de sobrescritura sin naming conventions |
+| **Sin aislamiento de usuarios** | Todos ven notebooks de otros | Medio - Requiere disciplina de nombres |
+| **Versionado manual** | DSDL no versiona automáticamente | Medio - Depende de Git + nombres |
+| **No IDE local** | Desarrollo exclusivo en JupyterLab browser | Bajo - Curva de aprendizaje |
+| **Métricas negocio manuales** | R², Accuracy, F1 requieren implementación | Medio - Necesita template base |
+| **No model registry** | No hay comparación A/B automática | Medio - Proceso manual |
+
+**Mejores Prácticas Documentadas:**
+
+- ✅ Estándar de nombrado: `Usuario_TipoModelo_CasoUso_Version.ipynb`
+- ✅ Template base con telemetría preconfigurada
+- ✅ Helpers reutilizables en imagen custom
+- ✅ Git para versionado de código
+- ✅ Model permissions (User para dev, Global para prod)
+- ✅ Separación DEV/PROD containers
+
+---
 
