@@ -2,6 +2,16 @@
 
 **Repositorio GitHub**: https://github.com/lufermalgo/splunk-dsdl.git
 
+## Control de Versiones
+
+**Versión actual**: 1.0.0  
+**Última actualización**: 2025-01-31  
+**Mantenido por**: Equipo DSDL
+
+### Changelog
+
+Ver sección completa de [Historial de Versiones](#historial-de-versiones) al final del documento.
+
 ## Resumen Ejecutivo
 
 Este documento compara las capacidades técnicas requeridas por el científico de datos (Cristian) que trabaja con autoencoders y modelos de deep learning para detección de anomalías en procesos industriales, con las capacidades que ofrece Splunk DSDL 5.2.2.
@@ -1268,6 +1278,52 @@ El POC es **viable** con las siguientes condiciones:
 
 ---
 
-**Fecha de análisis**: $(date)
-**Versión**: 1.0
+---
+
+## Historial de Versiones
+
+### Versión 1.0.0 (2025-01-31)
+
+**Estado**: Versión inicial
+
+**Contenido agregado:**
+- ✅ Análisis comparativo completo: Necesidades vs. Capacidades DSDL
+- ✅ Metodología de análisis (13 notebooks analizados)
+- ✅ Comparación de librerías y frameworks
+- ✅ Análisis de patrones de trabajo y flujos
+- ✅ Tipos de modelos identificados y compatibilidad
+- ✅ Entrada/salida de datos y gaps
+- ✅ Características específicas (series temporales, feature engineering)
+- ✅ Consideraciones de infraestructura
+- ✅ Limitaciones y gaps principales
+
+**Validaciones realizadas:**
+- ✅ Verificación de librerías en Golden Image (GitHub)
+  - `scipy`: ✅ INCLUIDO
+  - `statsmodels`: ✅ INCLUIDO
+  - `aeon`: ❌ NO INCLUIDO (requiere custom image)
+- ✅ Validación de `mode=stage` y fuente de datos
+- ✅ Análisis de custom images y proceso de agregar librerías
+
+**Documentación agregada:**
+- ✅ Procedimiento paso a paso para agregar librerías faltantes
+- ✅ Perspectiva del científico de datos (flujo de trabajo real)
+- ✅ Proceso DevOps completo (GCP/Azure)
+  - Build de imágenes custom
+  - Push a Artifact Registry (GCP)
+  - Push a Container Registry (Azure)
+  - CI/CD pipelines (GitHub Actions, Azure DevOps)
+  - Configuración de Kubernetes (GKE/AKS)
+  - Scanning de seguridad
+  - Rollback y versionado
+
+**Conclusión:**
+- ✅ Compatibilidad general: **ALTA**
+- ✅ POC viable con condiciones (custom image para `aeon`)
+- ✅ Proceso DevOps documentado y automatizable
+- ✅ Tiempo de respuesta: 15-30 min con CI/CD (vs 45-90 min manual)
+
+---
+
+**Próxima versión planificada**: 1.1.0 (validaciones prácticas en sandbox)
 
