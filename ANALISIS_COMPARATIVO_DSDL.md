@@ -1197,7 +1197,7 @@ steps:
 - Prueba diferentes arquitecturas
 - Si necesita nueva librería → solicita agregar (proceso ya establecido)
 
-### 9.6 Puntos Clave Antes de Configurar Sandbox
+### 9.7 Puntos Clave Antes de Configurar Sandbox
 
 **Prerequisitos Técnicos:**
 1. **Librería faltante**: `aeon` NO está en Golden Image. Preparar custom Docker image con `aeon` antes de comenzar sandbox. (`statsmodels` y `scipy` ✅ ya incluidos)
