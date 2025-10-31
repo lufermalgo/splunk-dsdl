@@ -457,7 +457,273 @@ container_image="splunk/golden-cpu-custom:5.2.2"
 **Para futuras librerías:**
 - Simplemente agregar al archivo `my_custom_libraries.txt` y rebuild imagen
 
-### 9.5 Puntos Clave Antes de Configurar Sandbox
+### 9.5 Perspectiva del Científico de Datos: Flujo de Trabajo Real con DSDL
+
+**Contexto:** Cristian (científico de datos) trabaja en un proyecto de autoencoder para detección de anomalías. Los datos están en Splunk, DSDL está implementado, y los contenedores están corriendo (no le interesa dónde ni cómo).
+
+**Flujo de trabajo día a día:**
+
+**Día 1: Inicio del proyecto**
+1. **Acceso a JupyterLab:**
+   - Abre navegador → URL del contenedor DSDL → JupyterLab se abre
+   - Crea nuevo notebook: `autoencoder_anomalias.ipynb`
+
+2. **Obtener datos desde Splunk:**
+   ```python
+   from splunklib.client import SplunkSearch
+   search = SplunkSearch(host="splunk-server", 
+                        port=8089, 
+                        username="usuario", 
+                        password="pass")
+   
+   # Buscar datos de sensores del horno
+   search_query = """
+   index=horno_data 
+   | head 10000
+   | table _time, k1, k2, k3, temp_*, presion_*
+   """
+   
+   df = search.get_dataframe(search_query)
+   df.set_index('_time', inplace=True)
+   ```
+   - **Primera sorpresa**: No lee CSV local como antes. Debe adaptarse a Splunk REST API o `mode=stage`
+
+3. **Preprocesamiento (igual que antes):**
+   ```python
+   # Esto funciona igual que sus notebooks actuales
+   df = df.resample("min").first()
+   df = df.interpolate(method='time')
+   df_diff = df - df_setpoints
+   ```
+   - ✅ Pandas funciona igual. No hay problema aquí.
+
+4. **Análisis exploratorio:**
+   ```python
+   import seaborn as sns
+   import matplotlib.pyplot as plt
+   
+   sns.heatmap(df.corr())
+   plt.show()
+   ```
+   - ✅ Matplotlib/Seaborn disponibles. Visualizaciones funcionan.
+
+**Día 2: Implementando modelo**
+
+1. **Importar librerías:**
+   ```python
+   from sklearn.preprocessing import StandardScaler
+   from sklearn.model_selection import train_test_split
+   from tensorflow import keras
+   from tensorflow.keras import layers
+   ```
+   - ✅ TensorFlow/Keras disponibles. Funciona bien.
+
+2. **Implementar autoencoder:**
+   ```python
+   # Define autoencoder
+   input_dim = df.shape[1]
+   encoder = layers.Dense(64, activation='relu')(input_layer)
+   decoder = layers.Dense(input_dim, activation='sigmoid')(encoder)
+   autoencoder = keras.Model(input_layer, decoder)
+   ```
+   - ✅ Keras funciona igual. Código migra sin cambios.
+
+3. **Entrenamiento:**
+   ```python
+   autoencoder.compile(optimizer='adam', loss='mse')
+   history = autoencoder.fit(X_train, X_train, 
+                            epochs=50, 
+                            batch_size=32,
+                            validation_data=(X_val, X_val))
+   ```
+   - ✅ Entrenamiento funciona. Puede monitorear con TensorBoard si quiere.
+
+**Día 3: Problema - Librería faltante**
+
+1. **Necesita aeon para segmentación de series temporales:**
+   ```python
+   from aeon.segmentation import ClaSPSegmenter
+   ```
+   - ❌ **Error**: `ModuleNotFoundError: No module named 'aeon'`
+
+2. **Qué hace Cristian:**
+   - No puede instalar en runtime (requiere permisos o rebuild)
+   - Opción A: Contacta a DevOps/equipo DSDL para agregar librería al contenedor
+   - Opción B: Usa alternativa temporal (otra librería) si existe
+   - Opción C: Espera a que agreguen la librería al custom image
+
+3. **Solución (desde perspectiva DevOps):**
+   - Equipo agrega `aeon>=0.5.0` a `my_custom_libraries.txt`
+   - Rebuild imagen: `./build.sh golden-cpu-custom splunk/ 5.2.2`
+   - Push a registry: `docker push splunk/golden-cpu-custom:5.2.2`
+   - Actualizan `images.conf` en Splunk
+   - **Cristian recibe**: "Librería agregada, reinicia tu contenedor"
+
+4. **Cristian continúa:**
+   - Reinicia contenedor desde DSDL UI
+   - Vuelve a abrir JupyterLab
+   - Ahora `import aeon` funciona ✅
+
+**Día 4: Preparar modelo para producción**
+
+1. **Estructura DSDL requerida:**
+   - Descubre que debe crear funciones `fit()`, `apply()`, `summary()`
+   - Adapta su código:
+
+   ```python
+   def fit(df, epochs=50, batch_size=32, **kwargs):
+       """Entrenamiento del modelo"""
+       # Preprocesamiento
+       scaler = StandardScaler()
+       X_scaled = scaler.fit_transform(df)
+       
+       # Crear y entrenar autoencoder
+       autoencoder = create_autoencoder(X_scaled.shape[1])
+       autoencoder.fit(X_scaled, X_scaled, 
+                      epochs=epochs, 
+                      batch_size=batch_size)
+       
+       # Guardar modelo y scaler
+       autoencoder.save('/srv/app/model/autoencoder.h5')
+       joblib.dump(scaler, '/srv/app/model/scaler.pkl')
+       
+       return {"status": "trained", "loss": history.history['loss'][-1]}
+   
+   def apply(df, **kwargs):
+       """Inferencia - detecta anomalías"""
+       # Cargar modelo y scaler
+       autoencoder = keras.models.load_model('/srv/app/model/autoencoder.h5')
+       scaler = joblib.load('/srv/app/model/scaler.pkl')
+       
+       # Preprocesar
+       X_scaled = scaler.transform(df)
+       
+       # Reconstruir
+       X_reconstructed = autoencoder.predict(X_scaled)
+       
+       # Calcular error de reconstrucción
+       mse = np.mean((X_scaled - X_reconstructed)**2, axis=1)
+       
+       # Retornar DataFrame con columnas para Splunk
+       result = df.copy()
+       result['anomaly_score'] = mse
+       result['is_anomaly'] = (mse > threshold).astype(int)
+       
+       return result
+   
+   def summary(**kwargs):
+       """Resumen del modelo"""
+       return {
+           "model_type": "autoencoder",
+           "input_dim": 26,
+           "encoder_dim": 64,
+           "status": "ready"
+       }
+   ```
+
+2. **Probar localmente en JupyterLab:**
+   ```python
+   # Test fit
+   result = fit(df_train, epochs=10)
+   print(result)
+   
+   # Test apply
+   anomalies = apply(df_test)
+   print(anomalies[['anomaly_score', 'is_anomaly']].head())
+   ```
+   - ✅ Funciona en notebook
+
+**Día 5: Probar con datos reales desde Splunk**
+
+1. **Stage datos para desarrollo:**
+   ```spl
+   index=horno_data 
+   | where _time > relative_time(now(), "-7d@d")
+   | table _time, k1, k2, k3, k4, s5-s20, k21-k26
+   | fit MLTKContainer algo=autoencoder_anomalias mode=stage into app:AutoencoderDev
+   ```
+   - Datos llegan al contenedor como CSV
+   - Puede trabajar interactivamente en JupyterLab
+
+2. **Entrenar con datos reales:**
+   ```spl
+   index=horno_data 
+   | where _time > relative_time(now(), "-30d@d")
+   | fit MLTKContainer algo=autoencoder_anomalias epochs=100 batch_size=32 into app:AutoencoderModel
+   ```
+   - Modelo se entrena en contenedor
+   - Resultados guardados automáticamente
+
+3. **Aplicar en producción:**
+   ```spl
+   index=horno_data 
+   | head 1000
+   | apply AutoencoderModel
+   | where is_anomaly=1
+   | table _time, k1, k2, anomaly_score, is_anomaly
+   ```
+   - ✅ Inferencia funciona. Resultados integrados en Splunk.
+
+**Desafíos y soluciones encontradas:**
+
+**Desafío 1: Librerías faltantes**
+- **Problema**: `aeon` no está disponible
+- **Solución**: Solicitar al equipo agregar al custom image
+- **Tiempo de espera**: ~2-4 horas (depende de proceso DevOps)
+- **Alternativa temporal**: Usar otra librería o implementar manualmente
+
+**Desafío 2: Datos en Splunk vs CSV locales**
+- **Problema**: No puede leer CSV directamente en flujo principal
+- **Solución**: Aprender SplunkSearch REST API o usar `mode=stage`
+- **Aprendizaje**: ~1-2 días de curva
+
+**Desafío 3: Estructura DSDL (fit/apply)**
+- **Problema**: Código actual no tiene estructura DSDL
+- **Solución**: Adaptar código a funciones fit/apply/summary
+- **Tiempo**: ~1 día de refactoring
+
+**Desafío 4: Debugging en producción**
+- **Problema**: Errores en `apply` son más difíciles de debuggear
+- **Solución**: Usar logs del contenedor, probar primero en `mode=stage`
+- **Mejora**: Mejor logging y manejo de errores
+
+**Ventajas descubiertas:**
+
+✅ **Integración directa con Splunk**: No necesita exportar/importar datos  
+✅ **Versionado automático**: Modelos versionados por Splunk  
+✅ **Escalabilidad**: Contenedor escala automáticamente según carga  
+✅ **Reproducibilidad**: Notebooks y modelos sincronizados automáticamente  
+✅ **Colaboración**: Otros pueden usar sus modelos directamente desde SPL  
+
+**Resumen del flujo de trabajo típico:**
+
+```
+1. Abrir JupyterLab (navegador)
+   ↓
+2. Crear/abrir notebook
+   ↓
+3. Obtener datos (SplunkSearch API o mode=stage)
+   ↓
+4. Experimentar/desarrollar (igual que antes)
+   ↓
+5. Si falta librería → solicitar agregar al custom image
+   ↓
+6. Adaptar código a estructura fit/apply/summary
+   ↓
+7. Probar con mode=stage (datos reales, desarrollo iterativo)
+   ↓
+8. Entrenar con fit (producción)
+   ↓
+9. Aplicar con apply (inferencia en producción)
+```
+
+**Para futuros experimentos:**
+- Crea nuevo notebook
+- Usa datos desde Splunk
+- Prueba diferentes arquitecturas
+- Si necesita nueva librería → solicita agregar (proceso ya establecido)
+
+### 9.6 Puntos Clave Antes de Configurar Sandbox
 
 **Prerequisitos Técnicos:**
 1. **Librería faltante**: `aeon` NO está en Golden Image. Preparar custom Docker image con `aeon` antes de comenzar sandbox. (`statsmodels` y `scipy` ✅ ya incluidos)
