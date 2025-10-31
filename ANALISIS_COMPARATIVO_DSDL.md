@@ -4,7 +4,7 @@
 
 ## Control de Versiones
 
-**Versión actual**: 1.0.1  
+**Versión actual**: 1.1.0  
 **Última actualización**: 2025-01-31  
 **Mantenido por**: Equipo DSDL
 
@@ -1792,8 +1792,15 @@ docker push us-central1-docker.pkg.dev/project/repo/golden-cpu-empresa:5.2.2
 6. Usar: | fit MLTKContainer algo=Cristian_Autoencoder_Horno4_v1
 ```
 
+**⚠️ Nota importante sobre el template:**
+- El template `template_empresa_base.ipynb` es un **punto de partida**, NO un archivo compartido
+- Cada científico **debe copiar** el template a su propio archivo con naming único
+- Si varios científicos usan `algo=template_empresa_base`, DSDL sobrescribirá modelos
+- **Correcto**: `algo=Cristian_Autoencoder_Horno4_v1` (copia personal)
+- **Incorrecto**: `algo=template_empresa_base` (compartido, sobrescritura)
+
 **Sin tocar:**
-- ✅ Telemetría (ya configurada)
+- ✅ Telemetría (ya configurada en helpers)
 - ✅ Métricas (helpers incluidos)
 - ✅ Preprocesamiento (estándar)
 - ✅ Conexión Splunk (configurada)
@@ -1858,11 +1865,7 @@ docker push us-central1-docker.pkg.dev/project/repo/golden-cpu-empresa:5.2.2
 
 ---
 
-**Próxima versión planificada**: 1.1.0 (validaciones prácticas en sandbox)
-
 ### Versión 1.0.1 (2025-01-31)
-
-**Estado**: Actualización arquitectónica operacional
 
 **Estado**: Actualización con hallazgos arquitectónicos y operacionales
 
@@ -1926,4 +1929,26 @@ docker push us-central1-docker.pkg.dev/project/repo/golden-cpu-empresa:5.2.2
 - ✅ Separación DEV/PROD containers
 
 ---
+
+### Versión 1.1.0 (2025-01-31)
+
+**Estado**: Aclaraciones arquitectónicas y operacionales
+
+**Aclaraciones agregadas:**
+
+- **Template base como punto de partida**: Aclaración crítica de que el template es para copiar, NO para uso compartido directo
+  - Riesgo de sobrescritura si múltiples científicos usan `algo=template_empresa_base`
+  - Flujo correcto: Abrir template → Save As con nombre único → Editar → Usar
+  - Sección 15.2 actualizada con nota importante sobre uso del template
+
+- **Mejoras en documentación:**
+  - Clarificación de la diferencia entre telemetría automática (DSDL) vs métricas de negocio (helpers)
+  - Explicación detallada de por qué cada científico debe tener su copia del template
+  - Eliminación de duplicación en historial de versiones
+
+**Problemas resueltos:**
+
+- ❌ Texto duplicado "Estado: Actualización" en versión 1.0.1 → ✅ Corregido
+
+**Próxima versión planificada**: 1.2.0 (validaciones prácticas en sandbox)
 
