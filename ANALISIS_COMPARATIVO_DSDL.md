@@ -4,7 +4,7 @@
 
 ## Control de Versiones
 
-**Versión actual**: 1.1.0  
+**Versión actual**: 1.2.0  
 **Última actualización**: 2025-01-31  
 **Mantenido por**: Equipo DSDL
 

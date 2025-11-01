@@ -37,3 +37,4 @@ local/
 dist/
 build/
 
+splunk-mltk-container-docker/
