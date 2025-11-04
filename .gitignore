@@ -38,3 +38,5 @@ dist/
 build/
 
 splunk-mltk-container-docker/
+# Excepción: Template empresarial debe estar en el repo
+!splunk-mltk-container-docker/notebooks_custom/template_empresa_base.ipynb
